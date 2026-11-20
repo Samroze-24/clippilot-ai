@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClipPilot AI — Local Video Clipping</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">ClipPilot <span>AI</span></div>
+  <div class="sub">Long video in. Short vertical clips out. 100% local — no cloud, no API key.</div>
+  <div id="authBox" class="auth-box"></div>
+</header>
+
+<main id="app" style="display:none">
+  <nav class="tabs">
+    <button data-tab="videos" class="active">Videos</button>
+    <button data-tab="clips">Clips</button>
+    <button data-tab="editor">Editor</button>
+    <button data-tab="publish">Publishing &amp; Billing</button>
+  </nav>
+
+  <section id="tab-videos" class="tab active">
+    <div class="card">
+      <h2>Upload a video</h2>
+      <p class="muted">MP4 / WebM / MOV / MKV, up to 500 MB. Files stay on your machine.</p>
+      <form id="uploadForm">
+        <input type="text" id="uploadTitle" placeholder="Video title (optional)">
+        <input type="file" id="uploadFile" accept="video/mp4,video/webm,video/quicktime,video/x-matroska" required>
+        <button type="submit">Upload</button>
+      </form>
+      <h3>Or ingest a public URL</h3>
+      <p class="muted">YouTube, Twitch, Kick or a direct MP4 link (public videos only, no live streams).</p>
+      <form id="urlForm">
+        <input type="url" id="urlInput" placeholder="https://www.youtube.com/watch?v=..." required>
+        <button type="submit">Fetch URL</button>
+      </form>
+      <div id="taskBox"></div>
+    </div>
+    <div class="card">
+      <h2>Your videos</h2>
+      <div id="videoList">Loading…</div>
+    </div>
+  </section>
+
+  <section id="tab-clips" class="tab">
+    <div class="card">
+      <h2>Clips</h2>
+      <p class="muted">Candidates are <b>queued</b> (not rendered yet). Generate a clip to render it with ffmpeg.
+      Scores are a transparent local heuristic — hook, engagement, value, shareability.</p>
+      <div id="clipList">Loading…</div>
+    </div>
+    <div class="card" id="previewCard" style="display:none">
+      <h2>Preview</h2>
+      <video id="previewVideo" controls playsinline style="max-width:360px;width:100%"></video>
+      <div id="previewMeta"></div>
+    </div>
+  </section>
+
+  <section id="tab-editor" class="tab">
+    <div class="card">
+      <h2>Editor</h2>
+      <p class="muted">Pick a rendered clip, then trim, split, merge or export it with a platform preset.</p>
+      <label>Clip
+        <select id="editorClip"></select>
+      </label>
+      <div class="grid">
+        <div>
+          <h3>Trim</h3>
+          <form id="trimForm">
+            <input type="number" step="0.1" min="0" id="trimStart" placeholder="Start (s)" required>
+            <input type="number" step="0.1" min="0" id="trimEnd" placeholder="End (s)" required>
+            <button type="submit">Trim &amp; render</button>
+          </form>
+        </div>
+        <div>
+          <h3>Split</h3>
+          <form id="splitForm">
+            <input type="number" step="0.1" min="0" id="splitAt" placeholder="Split at (s)" required>
+            <button type="submit">Split into two</button>
+          </form>
+        </div>
+        <div>
+          <h3>Export preset</h3>
+          <form id="exportForm">
+            <select id="exportPreset">
+              <option value="tiktok">TikTok — bold yellow captions + hook title</option>
+              <option value="reels">Reels — white-on-black captions + hook title</option>
+              <option value="shorts">Shorts — bold yellow captions, no hook title</option>
+            </select>
+            <button type="submit">Export</button>
+          </form>
+        </div>
+        <div>
+          <h3>Merge</h3>
+          <p class="muted">Select 2+ rendered clips (checkboxes in the Clips tab are not needed — enter IDs):</p>
+          <form id="mergeForm">
+            <input type="text" id="mergeIds" placeholder="Clip IDs, comma separated (e.g. 4,5)" required>
+            <input type="text" id="mergeTitle" placeholder="Merged title" value="Merged clip">
+            <button type="submit">Merge</button>
+          </form>
+        </div>
+      </div>
+      <h3>B-roll</h3>
+      <p class="muted">Upload B-roll files to overlay for the first 5 seconds of a generated clip (bottom-right corner).
+      Pexels stock footage needs a Pexels API key — see Publishing &amp; Billing.</p>
+      <form id="brollForm">
+        <input type="file" id="brollFile" accept="video/mp4,video/webm,video/quicktime" required>
+        <button type="submit">Upload B-roll</button>
+      </form>
+      <div id="brollList"></div>
+      <div id="editorMsg"></div>
+    </div>
+  </section>
+
+  <section id="tab-publish" class="tab">
+    <div class="card">
+      <h2>Connected accounts</h2>
+      <p class="muted">Direct publishing is <b>not connected</b> in this build. Nothing is ever posted on your behalf.</p>
+      <div id="accountList">Loading…</div>
+    </div>
+    <div class="card">
+      <h2>Billing (MOCK)</h2>
+      <div id="billingBox">Loading…</div>
+    </div>
+    <div class="card">
+      <h2>API keys</h2>
+      <p class="muted">Local API keys for the ClipPilot REST API. Send as the <code>X-API-Key</code> header.</p>
+      <form id="apiKeyForm">
+        <input type="text" id="apiKeyName" placeholder="Key name (e.g. my-script)" required>
+        <button type="submit">Create key</button>
+      </form>
+      <div id="apiKeyList"></div>
+      <h3>Provider keys</h3>
+      <div id="providerList"></div>
+    </div>
+  </section>
+</main>
+
+<section id="loginSection" class="card login-card">
+  <h2>Log in</h2>
+  <p class="muted">Demo login: <code>admin@clippilot.app</code> / <code>admin123</code></p>
+  <form id="loginForm">
+    <input type="email" id="loginEmail" placeholder="Email" value="admin@clippilot.app" required>
+    <input type="password" id="loginPassword" placeholder="Password" value="admin123" required>
+    <button type="submit">Log in</button>
+  </form>
+  <div id="loginMsg"></div>
+</section>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
