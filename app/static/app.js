@@ -322,11 +322,15 @@ $("uploadForm").addEventListener("submit", async (e) => {
 });
 $("urlForm").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const fd = new FormData();
+  fd.append("url", $("urlInput").value);
+  fd.append("title", "");
+  fd.append("use_cookies", String($("useCookies").checked));
+  fd.append("cookies_browser", $("cookiesBrowser").value);
+  const cf = $("cookiesFile").files[0];
+  if (cf) fd.append("cookies_file", cf);
   try {
-    const r = await api("/api/videos/from-url", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: $("urlInput").value }),
-    });
+    const r = await api("/api/videos/from-url", { method: "POST", body: fd });
     pollTask(r.task_id, "Fetching URL");
   } catch (err) { alert(err.message); }
 });

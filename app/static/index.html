@@ -35,6 +35,14 @@
       <form id="urlForm">
         <input type="url" id="urlInput" placeholder="https://www.youtube.com/watch?v=..." required>
         <button type="submit">Fetch URL</button>
+        <label><input type="checkbox" id="useCookies"> Use my browser's YouTube login (cookies)</label>
+        <select id="cookiesBrowser">
+          <option value="chrome">Chrome</option>
+          <option value="edge">Edge</option>
+          <option value="firefox">Firefox</option>
+        </select>
+        <input type="file" id="cookiesFile" accept=".txt">
+        <p class="muted">YouTube sometimes blocks downloads ("Requested format is not available"). Tick the box to let yt-dlp use your logged-in browser session — close the browser first if it fails. Or upload a cookies.txt (Netscape format) instead. Cookies are deleted right after the download.</p>
       </form>
       <div id="taskBox"></div>
       <div id="selectorBox" class="muted"></div>

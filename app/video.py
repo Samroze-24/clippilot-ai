@@ -448,13 +448,79 @@ def merge_clips(clip_paths: list[str], out_path: str) -> str:
             os.remove(list_path)
 
 
-def download_url(url: str, out_dir: str) -> dict:
+COOKIE_BROWSERS = {"chrome", "edge", "firefox"}
+_BROWSER_LABELS = {"chrome": "Chrome", "edge": "Edge", "firefox": "Firefox"}
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _clean_error(text: str) -> str:
+    """Strip ANSI colour codes and a leading 'ERROR: ' from an error message
+    (yt-dlp colours its errors, e.g. '[0;31mERROR:[0m ...' — the dashboard
+    shows them raw)."""
+    text = _ANSI_RE.sub("", text or "").strip()
+    if text.startswith("ERROR: "):
+        text = text[len("ERROR: "):]
+    return text
+
+
+def _cookie_error_message(browser: str) -> str:
+    """Actionable message for a browser-cookie read failure. Covers all
+    three causes (profile locked because the browser is running, no
+    profile found, no YouTube login in that browser)."""
+    label = _BROWSER_LABELS.get(browser, browser)
+    return (
+        f"Could not read cookies from {label}. Close {label} completely "
+        "and try again — the browser locks its cookie store while it is "
+        "running. Also make sure you are logged into YouTube in "
+        f"{label}; without a YouTube login there are no cookies to use. "
+        "Or upload a cookies.txt instead."
+    )
+
+
+def _looks_like_netscape_cookies(path: str) -> bool:
+    """True when the file has at least one non-comment Netscape cookie line
+    (tab-separated, 6+ fields). Used to catch a wrong export early."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                return len(line.split("\t")) >= 6
+        return False
+    except OSError:
+        return False
+
+
+def download_url(url: str, out_dir: str, use_cookies: bool = False,
+                 cookies_browser: str = "chrome",
+                 cookies_file: str | None = None) -> dict:
     """Download a public video URL with yt-dlp (public videos only).
-    Uses the bundled ffmpeg for any post-processing."""
+    Uses the bundled ffmpeg for any post-processing.
+
+    YouTube increasingly blocks yt-dlp downloads ('Requested format is not
+    available' — SABR/PO-token gating). Two opt-in cookie paths get around
+    it by using the user's own logged-in browser session:
+      - use_cookies=True  -> yt-dlp --cookies-from-browser <browser>
+      - cookies_file=path -> yt-dlp --cookiefile (Netscape cookies.txt)
+    Cookie values are never read or logged here — yt-dlp reads them and
+    this function only ever sees success/failure. A cookies.txt passed in
+    is the caller's responsibility to delete (the router deletes it right
+    after the download, success or failure).
+    """
     try:
         import yt_dlp
+        from yt_dlp.cookies import CookieLoadError
     except ImportError as exc:
         raise RuntimeError("yt-dlp is not installed. Run: pip install -r requirements.txt") from exc
+    if use_cookies and cookies_browser not in COOKIE_BROWSERS:
+        raise ValueError(
+            f"Unknown browser '{cookies_browser}'. Use chrome, edge or firefox.")
+    if cookies_file and not _looks_like_netscape_cookies(cookies_file):
+        raise RuntimeError(
+            "The cookies.txt file could not be read. Export it again from your "
+            "browser in Netscape format (e.g. with a 'Get cookies.txt' extension) "
+            "and retry — or use the browser-cookies checkbox instead.")
     os.makedirs(out_dir, exist_ok=True)
     opts = {
         "format": "best[height<=720]/best",
@@ -465,9 +531,44 @@ def download_url(url: str, out_dir: str) -> dict:
         "max_filesize": 500 * 1024 * 1024,
         "no_warnings": True,
     }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        path = ydl.prepare_filename(info)
+    if use_cookies:
+        opts["cookiesfrombrowser"] = (cookies_browser,)
+    if cookies_file:
+        opts["cookiefile"] = cookies_file
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            path = ydl.prepare_filename(info)
+    except CookieLoadError as exc:
+        # yt-dlp raises this generic error when the browser cookie store
+        # cannot be read (profile locked because the browser is running,
+        # no profile found, or no cookies at all). Both causes have the
+        # same two fixes, so say them both plainly.
+        raise RuntimeError(_cookie_error_message(cookies_browser)) from exc
+    except Exception as exc:
+        msg = _clean_error(str(exc))
+        # yt-dlp sometimes surfaces the cookie failure as a plain
+        # DownloadError instead ("could not find chrome cookies database
+        # ...", "failed to load cookies", ...). When cookies were
+        # requested, any error mentioning cookies is a cookie problem.
+        if (use_cookies or cookies_file) and "cookie" in msg.lower():
+            raise RuntimeError(_cookie_error_message(cookies_browser)) from exc
+        if "Requested format is not available" in msg:
+            if use_cookies or cookies_file:
+                raise RuntimeError(
+                    "YouTube still refused this download even with cookies "
+                    "('Requested format is not available'). Try a different "
+                    "browser profile, or download the video and upload the "
+                    "file directly instead."
+                ) from exc
+            raise RuntimeError(
+                "YouTube refused this download ('Requested format is not "
+                "available'). YouTube is blocking yt-dlp downloads from this "
+                "machine. Try again with 'Use my browser's YouTube login "
+                "(cookies)' enabled, or download the video and upload the "
+                "file directly."
+            ) from exc
+        raise RuntimeError(msg or "Download failed.") from exc
     if not path or not os.path.exists(path):
         raise RuntimeError("Download finished but no file was produced.")
     return {"path": path, "title": info.get("title", "Untitled"),

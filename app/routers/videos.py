@@ -5,7 +5,7 @@ import os
 import shutil
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -15,7 +15,7 @@ from ..captions import parse_transcript_file, transcribe_whisper
 from ..database import SessionLocal, get_db
 from ..llm import llm_config, llm_configured, select_clips_llm
 from ..models import Clip, ClipStat, Transcript, User, Video
-from ..schemas import TaskOut, UrlIngestIn, VideoOut
+from ..schemas import TaskOut, VideoOut
 from ..video import (PLAN_LIMITS, analyze_video, download_url, extract_keywords,
                      mean_volume, probe_video, score_candidates)
 from .. import video as video_mod
@@ -162,11 +162,15 @@ def _do_analyze(task_id: str, video_id: int):
         db.close()
 
 
-def _do_download(task_id: str, url: str, title: str, user_id: int):
+def _do_download(task_id: str, url: str, title: str, user_id: int,
+                 use_cookies: bool = False, cookies_browser: str = "chrome",
+                 cookies_path: str | None = None):
     db = SessionLocal()
     try:
         task_store.update_task(task_id, "downloading (yt-dlp)", 20)
-        info = download_url(url, UPLOAD_DIR)
+        info = download_url(url, UPLOAD_DIR, use_cookies=use_cookies,
+                            cookies_browser=cookies_browser,
+                            cookies_file=cookies_path)
         task_store.update_task(task_id, "probing video", 70)
         probe = probe_video(info["path"])
         video = Video(
@@ -182,6 +186,14 @@ def _do_download(task_id: str, url: str, title: str, user_id: int):
     except Exception as exc:
         task_store.fail_task(task_id, str(exc))
     finally:
+        # Cookies are sensitive credentials: delete an uploaded cookies.txt
+        # whatever happened (success or failure). It is never stored in the
+        # database and never survives the ingest.
+        if cookies_path and os.path.exists(cookies_path):
+            try:
+                os.remove(cookies_path)
+            except OSError:
+                pass
         db.close()
 
 
@@ -263,14 +275,42 @@ async def upload_video(title: str = "", file: UploadFile = File(...),
 
 
 @router.post("/from-url")
-def ingest_url(payload: UrlIngestIn, background: BackgroundTasks,
-               user: User = Depends(get_current_principal),
-               db: Session = Depends(get_db)):
+async def ingest_url(background: BackgroundTasks,
+                     url: str = Form(...), title: str = Form(""),
+                     use_cookies: bool = Form(False),
+                     cookies_browser: str = Form("chrome"),
+                     cookies_file: UploadFile | None = File(None),
+                     user: User = Depends(get_current_principal),
+                     db: Session = Depends(get_db)):
+    """Ingest a public URL (multipart form, so a cookies.txt can ride along).
+
+    use_cookies + cookies_browser ask yt-dlp to read the logged-in browser
+    session (--cookies-from-browser); cookies_file is an uploaded Netscape
+    cookies.txt, saved only under uploads/ and deleted right after the
+    ingest, success or failure. Both are opt-in — default is a plain fetch.
+    """
     _check_video_limit(db, user)
-    if not payload.url.startswith(("http://", "https://")):
+    if not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="URL must start with http:// or https://")
+    if cookies_browser not in {"chrome", "edge", "firefox"}:
+        raise HTTPException(status_code=400, detail="Browser must be chrome, edge or firefox.")
+    cookies_path = None
+    if cookies_file is not None:
+        ext = os.path.splitext(cookies_file.filename or "")[1].lower()
+        if ext != ".txt":
+            raise HTTPException(status_code=400,
+                                detail="Cookies file must be a .txt file in Netscape format.")
+        content = await cookies_file.read()
+        if len(content) > 1024 * 1024:
+            raise HTTPException(status_code=400,
+                                detail="Cookies file is too large (max 1 MB).")
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        cookies_path = os.path.join(UPLOAD_DIR, f"cookies_{uuid.uuid4().hex[:12]}.txt")
+        with open(cookies_path, "wb") as f:
+            f.write(content)
     task_id = task_store.create_task("url-download")
-    background.add_task(_do_download, task_id, payload.url, payload.title, user.id)
+    background.add_task(_do_download, task_id, url, title, user.id,
+                        use_cookies, cookies_browser, cookies_path)
     return {"task_id": task_id, "status": "running"}
 
 

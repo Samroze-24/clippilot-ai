@@ -80,7 +80,7 @@ Overall = 0.30·hook + 0.30·engagement + 0.25·value + 0.15·shareability
 | SupoClip feature | ClipPilot status |
 |---|---|
 | File upload + direct MP4 URLs | ✅ Working (yt-dlp; direct MP4 verified) |
-| YouTube / Twitch / Kick URLs | ⚠️ Partial — yt-dlp wired, but YouTube downloads failed here with "Requested format is not available" (format listing works, download blocked — SABR/PO-token gating in this environment); may work from a home connection |
+| YouTube / Twitch / Kick URLs | ⚠️ Partial — yt-dlp wired, but YouTube downloads are blocked by SABR/PO-token gating ("Requested format is not available") — confirmed on the build machine AND on a home connection. Workaround: tick **Use my browser's YouTube login (cookies)** on the Fetch URL form, or upload a cookies.txt, or download the video and upload the file directly |
 | AI clip selection (LLM, 3–7 segments) | ✅ Working with Groq (`openai/gpt-oss-120b`, free tier) when configured; validated hard (15–60s, in-range, no overlapping duplicates) and falls back to the local scorer on any failure — the analysis response always says which selector was used |
 | Virality scoring (hook/engagement/value/shareability) | 🔶 Local equivalent — rule-based sub-scores, labelled local (used for both LLM picks and local picks) |
 | Smart vertical crop + face detection | ✅ Working (OpenCV Haar; centre-crop fallback) |
@@ -95,6 +95,30 @@ Overall = 0.30·hook + 0.30·engagement + 0.25·value + 0.15·shareability
 | Billing + API keys | 🔶 Mock billing; real local API keys for the REST API |
 | MCP server | ❌ Later step (not in this build) |
 | Twitch auto-import / live streams | ❌ Later step (not in this build) |
+
+## YouTube downloads blocked? Use browser cookies
+
+YouTube increasingly blocks yt-dlp downloads with
+`Requested format is not available` (SABR/PO-token gating). This is a
+YouTube-side block, not a ClipPilot bug — it was confirmed on the build
+machine **and** on a home connection. Two opt-in fixes, both on the
+**Fetch URL** form:
+
+1. **Browser cookies (easiest)** — tick *Use my browser's YouTube login
+   (cookies)* and pick your browser (Chrome / Edge / Firefox). yt-dlp then
+   reads your logged-in session (`--cookies-from-browser`). If it fails
+   with "Could not read cookies", **close the browser completely** and try
+   again (the browser locks its cookie store while running), and make sure
+   you are logged into YouTube in that browser.
+2. **cookies.txt** — export your cookies in Netscape format (e.g. with a
+   "Get cookies.txt" browser extension) and attach the file instead.
+   The file lives only under `uploads/`, is never stored in the database,
+   and is **deleted right after the download** (success or failure).
+   Browser cookies are read live by yt-dlp and never copied anywhere.
+
+Cookies are sensitive credentials: they are never logged and never leave
+your machine. If neither option works, download the video and use **file
+upload** instead — that path always works.
 
 ## Run it (Windows, PowerShell + VS Code)
 
@@ -214,14 +238,16 @@ Tests cover auth, upload, analysis, scoring, real ffmpeg rendering
 plus the v1.1 additions: LLM validation + mocked Groq success/failure/
 fallback paths, the honest `selector` in analysis results, YouTube OAuth URL
 building, token refresh (mocked), mocked publish success, and fail-closed
-publishing without credentials (503).
+publishing without credentials (503), plus the v1.2 additions: browser-cookies
+and cookies.txt ingest paths (mocked yt-dlp), actionable cookie errors, ANSI
+stripping, and cookies-file deletion after ingest.
 
 ## API overview
 
 | Endpoint | What it does |
 |---|---|
 | `POST /api/videos/upload` | Upload a video (500 MB cap) |
-| `POST /api/videos/from-url` | Ingest a public URL with yt-dlp (background task) |
+| `POST /api/videos/from-url` | Ingest a public URL with yt-dlp (background task; multipart form — optional browser cookies via `use_cookies` + `cookies_browser`, or a cookies.txt upload) |
 | `POST /api/videos/{id}/analyze` | Analysis → ranked clip candidates (`selector: "llm"` or `"local"`) |
 | `POST /api/videos/{id}/transcribe` | Local faster-whisper transcription (background task) |
 | `POST /api/videos/{id}/transcript` | Upload an SRT/TXT transcript |
@@ -262,16 +288,20 @@ or a local API key via the `X-API-Key` header.
   covered by tests with mocks, but the first real connect + upload must be
   done by the user with their own Google Cloud OAuth client. YouTube Data API
   quota (default 10,000 units/day, 1,600 per upload) also applies.
-- YouTube may block yt-dlp downloads without cookies (bot checks). Verified
-  from the build machine: a direct MP4 URL ingests fine, but YouTube downloads
-  failed with "Requested format is not available" on two different test videos
-  (format listing works; the actual stream download is blocked — SABR/PO-token
-  gating in that environment). It may work from a normal home connection; if
-  YouTube blocks, the task fails with a clear error and the video is not
-  created — use a direct MP4 link or file upload instead.
+- YouTube may block yt-dlp downloads without cookies (bot checks). A direct
+  MP4 URL ingests fine, but YouTube downloads failed with "Requested format
+  is not available" on the build machine **and on a home connection** (format
+  listing works; the actual stream download is blocked — SABR/PO-token
+  gating). Use the **browser-cookies** checkbox or a cookies.txt on the Fetch
+  URL form (see above); if that fails, the task fails with a clear error and
+  the video is not created — use a direct MP4 link or file upload instead.
+  A real cookie-based YouTube fetch is **not verified here** (no YouTube
+  login exists in the build environment); the user must try it with their
+  own logged-in browser.
 - Verified on Linux (Python 3.12) with cp314 wheel existence proven by
-  download check. The Windows run is still unconfirmed; the Swagger
-  Authorize button click is a manual check.
+  download check. **Windows run confirmed 2026-11-20** (dashboard live at
+  127.0.0.1:8012, demo login works). The Swagger Authorize button click is
+  a manual check.
 - No demo video is bundled (too big). Upload your own video to try it.
 
 ## Project layout

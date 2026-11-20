@@ -16,7 +16,7 @@ from .database import Base, engine
 from .routers import accounts, auth, clips, publish, videos
 from .video import ffmpeg_version
 
-app = FastAPI(title="ClipPilot AI", version="1.1.0",
+app = FastAPI(title="ClipPilot AI", version="1.2.0",
               description="Local-first video clipping: long video in, short vertical "
                           "clips out. Uploads, URL ingestion (yt-dlp), transparent "
                           "local highlight scoring with optional Groq LLM clip "

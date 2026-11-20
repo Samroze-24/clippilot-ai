@@ -44,11 +44,6 @@ class VideoOut(BaseModel):
         from_attributes = True
 
 
-class UrlIngestIn(BaseModel):
-    url: str
-    title: str = ""
-
-
 class ClipOut(BaseModel):
     id: int
     video_id: int
