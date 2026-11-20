@@ -13,10 +13,12 @@ from .. import tasks as task_store
 from ..auth import get_current_principal
 from ..captions import parse_transcript_file, transcribe_whisper
 from ..database import SessionLocal, get_db
+from ..llm import llm_config, llm_configured, select_clips_llm
 from ..models import Clip, ClipStat, Transcript, User, Video
 from ..schemas import TaskOut, UrlIngestIn, VideoOut
 from ..video import (PLAN_LIMITS, analyze_video, download_url, extract_keywords,
-                     probe_video)
+                     mean_volume, probe_video, score_candidates)
+from .. import video as video_mod
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
@@ -73,6 +75,57 @@ def _do_analyze(task_id: str, video_id: int):
         task_store.update_task(task_id, "detecting speech segments", 35)
         result = analyze_video(video.stored_path, transcript_words=words,
                                keywords=keywords, stats_boost=stats_boost, top_n=5)
+        # Real LLM clip selection (Groq) when configured and a transcript
+        # exists — otherwise the local scorer above stands. The LLM only
+        # *picks* windows; the same transparent scorer still computes the
+        # score/breakdown, and the LLM's title/reason are kept verbatim.
+        selector = "local"
+        selector_detail = "Local transparent scorer"
+        if tr:
+            segments = json.loads(tr.segments_json or "[]")
+            if segments and llm_configured():
+                task_store.update_task(task_id, "asking LLM for clip picks (Groq)", 60)
+                llm_picks, llm_detail = select_clips_llm(segments, result["duration"])
+                if llm_picks:
+                    llm_windows = [(c["start"], c["end"]) for c in llm_picks]
+                    for s, e in llm_windows:
+                        key = (round(s, 1), round(e, 1))
+                        if key not in video_mod.mean_volume_cached:
+                            video_mod.mean_volume_cached[key] = mean_volume(
+                                video.stored_path, s, e)
+                    speech = [tuple(s) for s in result["speech_segments"]]
+                    scored = score_candidates(
+                        result["duration"], speech, keywords, words,
+                        stats_boost, top_n=len(llm_windows), windows=llm_windows)
+                    by_window = {(round(c["start"], 2), round(c["end"], 2)): c
+                                 for c in llm_picks}
+                    llm_candidates = []
+                    for cand in scored:
+                        pick = by_window.get((round(cand["start"], 2),
+                                              round(cand["end"], 2)))
+                        if pick:
+                            cand = dict(cand)
+                            cand["llm_title"] = pick["title"]
+                            cand["llm_reason"] = pick["reason"]
+                            llm_candidates.append(cand)
+                    if llm_candidates:
+                        result["candidates"] = llm_candidates
+                        selector = "llm"
+                        selector_detail = (
+                            f"LLM (Groq {llm_config()['model']}) — "
+                            f"{len(llm_candidates)} picks")
+                    else:
+                        selector_detail = ("LLM picks could not be scored — "
+                                           "fell back to local scorer")
+                else:
+                    selector_detail = (f"LLM failed ({llm_detail}) — fell back "
+                                       "to local scorer")
+            elif segments:
+                selector_detail = ("Local scorer — LLM not configured "
+                                   "(set LLM_PROVIDER=groq and LLM_API_KEY in .env)")
+            else:
+                selector_detail = ("Local scorer — no transcript yet "
+                                   "(transcribe the video to enable LLM picks)")
         task_store.update_task(task_id, "scoring candidates", 70)
         # Replace previous candidates for this video.
         db.query(Clip).filter(Clip.video_id == video_id, Clip.status == "queued").delete()
@@ -82,11 +135,11 @@ def _do_analyze(task_id: str, video_id: int):
             clip = Clip(
                 video_id=video_id,
                 title=f"Clip {i + 1} — {cand['start']:.0f}s–{cand['end']:.0f}s",
-                hook_title=make_hook_title(keywords),
+                hook_title=cand.get("llm_title") or make_hook_title(keywords),
                 start_sec=cand["start"], end_sec=cand["end"],
                 duration_sec=cand["duration"], score=cand["score"],
                 breakdown_json=json.dumps(cand["breakdown"]),
-                reason=cand["reason"], status="queued",
+                reason=cand.get("llm_reason") or cand["reason"], status="queued",
                 caption_status="none", caption_template="bold-yellow",
             )
             db.add(clip)
@@ -100,7 +153,9 @@ def _do_analyze(task_id: str, video_id: int):
         db.commit()
         task_store.finish_task(task_id, {"video_id": video_id, "clip_ids": clip_ids,
                                          "candidates": len(clip_ids),
-                                         "duration": result["duration"]})
+                                         "duration": result["duration"],
+                                         "selector": selector,
+                                         "selector_detail": selector_detail})
     except Exception as exc:
         task_store.fail_task(task_id, str(exc))
     finally:

@@ -17,8 +17,8 @@ PLATFORMS = {
         "label": "YouTube",
         "steps": [
             "Create a project in Google Cloud Console and enable the YouTube Data API v3.",
-            "Create OAuth 2.0 credentials (Desktop app) and set the redirect URI to http://127.0.0.1:8012/api/accounts/youtube/callback.",
-            "Set YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in .env, restart, then connect here.",
+            "Create OAuth 2.0 credentials (Desktop app) and set the redirect URI to http://127.0.0.1:8012/api/publish/youtube/callback.",
+            "Set YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in .env, restart, then click Connect YouTube on the Publishing tab.",
         ],
     },
     "tiktok": {

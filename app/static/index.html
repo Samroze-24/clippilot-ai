@@ -9,7 +9,7 @@
 <body>
 <header>
   <div class="brand">ClipPilot <span>AI</span></div>
-  <div class="sub">Long video in. Short vertical clips out. 100% local — no cloud, no API key.</div>
+  <div class="sub">Long video in. Short vertical clips out. Local-first — cloud features only when you configure them.</div>
   <div id="authBox" class="auth-box"></div>
 </header>
 
@@ -37,6 +37,7 @@
         <button type="submit">Fetch URL</button>
       </form>
       <div id="taskBox"></div>
+      <div id="selectorBox" class="muted"></div>
     </div>
     <div class="card">
       <h2>Your videos</h2>
@@ -48,7 +49,9 @@
     <div class="card">
       <h2>Clips</h2>
       <p class="muted">Candidates are <b>queued</b> (not rendered yet). Generate a clip to render it with ffmpeg.
-      Scores are a transparent local heuristic — hook, engagement, value, shareability.</p>
+      Scores are a transparent local heuristic — hook, engagement, value, shareability.
+      Clip picks come from the Groq LLM when it is configured, otherwise from the local scorer;
+      the last analysis shows which one was used.</p>
       <div id="clipList">Loading…</div>
     </div>
     <div class="card" id="previewCard" style="display:none">
@@ -117,7 +120,9 @@
   <section id="tab-publish" class="tab">
     <div class="card">
       <h2>Connected accounts</h2>
-      <p class="muted">Direct publishing is <b>not connected</b> in this build. Nothing is ever posted on your behalf.</p>
+      <p class="muted">YouTube publishing works when you connect your Google account.
+      Nothing is ever posted without you clicking Publish — uploads default to private.</p>
+      <div id="publishBox">Loading…</div>
       <div id="accountList">Loading…</div>
     </div>
     <div class="card">

@@ -6,5 +6,6 @@ venv/
 uploads/
 clips/
 broll/
+data/
 .DS_Store
 .env

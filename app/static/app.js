@@ -72,7 +72,15 @@ function pollTask(taskId, label) {
       txt.textContent = t.stage + " (" + t.progress + "%)";
       if (t.status === "done") {
         clearInterval(timer);
-        txt.textContent = "Done ✓ " + JSON.stringify(t.result);
+        let doneText = "Done ✓ " + JSON.stringify(t.result);
+        if (t.result && t.result.selector) {
+          const sel = t.result.selector === "llm" ? "LLM (Groq)" : "Local scorer";
+          doneText += " — Clip selection: " + sel;
+          const box = $("selectorBox");
+          if (box) box.textContent = "Last analysis — clip selection: " + sel
+            + (t.result.selector_detail ? " — " + t.result.selector_detail : "");
+        }
+        txt.textContent = doneText;
         refreshAll();
       } else if (t.status === "failed") {
         clearInterval(timer);
@@ -164,6 +172,9 @@ async function loadClips() {
           <button class="small" onclick="generateClip(${c.id})">Generate</button>
           <button class="small" onclick="previewClip(${c.id})">Preview</button>
           <button class="small" onclick="downloadClip(${c.id})">Download</button>
+          ${c.status === "ready"
+            ? `<button class="small" onclick="publishClip(${c.id})">Publish to YouTube</button>`
+            : `<button class="small" disabled title="Generate the clip first">Publish to YouTube</button>`}
           <button class="small" onclick="logStats(${c.id})">Log stats</button>
           <button class="small danger" onclick="deleteClip(${c.id})">Delete</button>
         </div>
@@ -189,6 +200,24 @@ async function previewClip(id) {
   v.scrollIntoView();
 }
 function downloadClip(id) { window.open("/api/clips/" + id + "/file", "_blank"); }
+async function publishClip(id) {
+  if (!window.ytConnected) {
+    alert("YouTube is not connected yet. Go to the Publishing & Billing tab and click Connect YouTube.");
+    return;
+  }
+  const privacy = (prompt("Privacy for this upload (private / unlisted / public):", "private") || "private").trim().toLowerCase();
+  if (!["private", "unlisted", "public"].includes(privacy)) {
+    alert("Privacy must be private, unlisted or public.");
+    return;
+  }
+  try {
+    const r = await api("/api/publish/youtube/upload", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clip_id: id, title: "", description: "", privacy }),
+    });
+    pollTask(r.task_id, "Publishing clip " + id + " to YouTube");
+  } catch (err) { alert(err.message); }
+}
 async function deleteClip(id) {
   if (!confirm("Delete clip " + id + "?")) return;
   await api("/api/clips/" + id, { method: "DELETE" });
@@ -309,6 +338,48 @@ async function loadAccounts() {
       <div class="row"><b>${esc(a.label)}</b> — <span class="badge">${esc(a.status)}</span>
       <div class="muted">To connect: ${a.connect_steps.map(esc).join(" ")}</div></div>`).join("");
   } catch (err) { $("accountList").innerHTML = "<p class='msg error'>" + esc(err.message) + "</p>"; }
+  loadPublishStatus();
+}
+async function loadPublishStatus() {
+  const box = $("publishBox");
+  if (!box) return;
+  try {
+    const s = await api("/api/publish/status");
+    const yt = s.youtube || {};
+    window.ytConnected = !!yt.connected;
+    let html = `<div class="row"><b>YouTube</b> — <span class="badge">${esc(yt.status || "not_connected")}</span>`;
+    if (yt.connected) {
+      html += `<div class="muted">Connected${yt.channel ? " as " + esc(yt.channel) : ""} — uploads default to private.</div>
+        <div style="margin-top:8px"><button class="small danger" onclick="disconnectYouTube()">Disconnect YouTube</button></div>`;
+    } else if (yt.configured) {
+      html += `<div class="muted">OAuth credentials are set — click Connect and sign in with Google.</div>
+        <div style="margin-top:8px"><button class="small" onclick="connectYouTube()">Connect YouTube</button></div>`;
+    } else {
+      html += `<div class="muted">Not configured — set YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in .env (see README), then restart.</div>`;
+    }
+    html += `</div>
+      <div class="row"><b>TikTok</b> — <span class="badge">not_configured</span>
+      <div class="muted">Needs a TikTok developer app + approval (see README). No posting.</div></div>
+      <div class="row"><b>Instagram</b> — <span class="badge">not_configured</span>
+      <div class="muted">Needs a Meta developer app + Business/Creator account (see README). No posting.</div></div>`;
+    box.innerHTML = html;
+  } catch (err) { box.innerHTML = "<p class='msg error'>" + esc(err.message) + "</p>"; }
+}
+async function connectYouTube() {
+  try {
+    const r = await api("/api/publish/youtube/auth-url");
+    window.open(r.auth_url, "_blank");
+    alert("Google sign-in opened in a new tab. After allowing access you will be redirected back here — then refresh this page.");
+  } catch (err) { alert(err.message); }
+}
+async function disconnectYouTube() {
+  if (!confirm("Disconnect YouTube? Stored tokens will be deleted.")) return;
+  try {
+    await api("/api/publish/youtube/disconnect", { method: "POST" });
+    window.ytConnected = false;
+    loadPublishStatus();
+    loadAccounts();
+  } catch (err) { alert(err.message); }
 }
 async function loadBilling() {
   try {

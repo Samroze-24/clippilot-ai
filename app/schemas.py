@@ -109,6 +109,13 @@ class ApiKeyCreate(BaseModel):
     name: str
 
 
+class YoutubeUploadIn(BaseModel):
+    clip_id: int
+    title: str = ""
+    description: str = ""
+    privacy: str = "private"  # private | unlisted | public (default private)
+
+
 class ApiKeyOut(BaseModel):
     id: int
     name: str

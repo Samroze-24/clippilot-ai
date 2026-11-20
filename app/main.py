@@ -1,8 +1,10 @@
-"""ClipPilot AI — local OpusClip-style video clipping tool.
+"""ClipPilot AI — local-first OpusClip-style video clipping tool.
 
 Upload a long video (or a public URL), analyse it locally, get ranked
 9:16 clips with transparent scores, and render them with real ffmpeg.
-No cloud AI, no API key, no paid service.
+Local by default; two optional cloud features (Groq LLM clip selection and
+direct YouTube publishing) run only when you configure their credentials.
+No paid service is ever required.
 """
 import os
 
@@ -11,16 +13,18 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .database import Base, engine
-from .routers import accounts, auth, clips, videos
+from .routers import accounts, auth, clips, publish, videos
 from .video import ffmpeg_version
 
-app = FastAPI(title="ClipPilot AI", version="1.0.0",
-              description="Local video clipping: long video in, short vertical "
+app = FastAPI(title="ClipPilot AI", version="1.1.0",
+              description="Local-first video clipping: long video in, short vertical "
                           "clips out. Uploads, URL ingestion (yt-dlp), transparent "
-                          "local highlight scoring, face-centred 9:16 rendering, "
+                          "local highlight scoring with optional Groq LLM clip "
+                          "selection, face-centred 9:16 rendering, "
                           "word-synced captions, editor (trim/split/merge), platform "
-                          "export presets, mock billing and local API keys. "
-                          "No cloud AI, no API key.")
+                          "export presets, direct YouTube publishing (OAuth), mock "
+                          "billing and local API keys. Cloud features only run when "
+                          "you configure them — otherwise everything stays local.")
 
 Base.metadata.create_all(bind=engine)
 
@@ -28,6 +32,7 @@ app.include_router(auth.router)
 app.include_router(videos.router)
 app.include_router(clips.router)
 app.include_router(accounts.router)
+app.include_router(publish.router)
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
