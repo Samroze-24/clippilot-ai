@@ -361,8 +361,11 @@ def test_youtube_upload_fails_closed_without_credentials(client, auth_headers, t
 
 
 def test_tiktok_instagram_upload_503(client, auth_headers):
+    # v1.3: these are real endpoints now (they take a clip payload), but
+    # without credentials they still fail closed with 503 "not configured".
     for platform in ("tiktok", "instagram"):
-        r = client.post(f"/api/publish/{platform}/upload", headers=auth_headers, json={})
+        r = client.post(f"/api/publish/{platform}/upload", headers=auth_headers,
+                        json={"clip_id": 1})
         assert r.status_code == 503, (platform, r.text)
         assert "not configured" in r.text.lower()
 

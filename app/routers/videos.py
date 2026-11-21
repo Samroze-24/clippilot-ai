@@ -15,7 +15,10 @@ from ..captions import parse_transcript_file, transcribe_whisper
 from ..database import SessionLocal, get_db
 from ..llm import llm_config, llm_configured, select_clips_llm
 from ..models import Clip, ClipStat, Transcript, User, Video
-from ..schemas import TaskOut, VideoOut
+from ..schemas import TaskOut, TwitchImportIn, VideoOut
+from ..transcribe import (AssemblyAIError, assemblyai_configured,
+                          transcribe_assemblyai, transcription_provider)
+from ..twitch import TwitchError, list_vods
 from ..video import (PLAN_LIMITS, analyze_video, download_url, extract_keywords,
                      mean_volume, probe_video, score_candidates)
 from .. import video as video_mod
@@ -206,11 +209,21 @@ def _do_transcribe(task_id: str, video_id: int):
             return
         video.transcript_status = "transcribing"
         db.commit()
-        task_store.update_task(task_id, "transcribing (faster-whisper, tiny model)", 30)
-        result = transcribe_whisper(video.stored_path)
+        provider = transcription_provider()
+        if provider == "assemblyai":
+            # Fail-closed: a missing/bad AssemblyAI key fails the task with
+            # a clear error — it NEVER silently falls back to a fake or
+            # local transcript and calls it AssemblyAI's.
+            task_store.update_task(task_id, "transcribing (AssemblyAI cloud)", 30)
+            result = transcribe_assemblyai(video.stored_path)
+            source = "assemblyai"
+        else:
+            task_store.update_task(task_id, "transcribing (faster-whisper, tiny model)", 30)
+            result = transcribe_whisper(video.stored_path)
+            source = "whisper"
         task_store.update_task(task_id, "saving transcript", 85)
         db.query(Transcript).filter(Transcript.video_id == video_id).delete()
-        db.add(Transcript(video_id=video_id, source="whisper",
+        db.add(Transcript(video_id=video_id, source=source,
                           language=result["language"],
                           segments_json=json.dumps(result["segments"]),
                           words_json=json.dumps(result["words"])))
@@ -218,7 +231,15 @@ def _do_transcribe(task_id: str, video_id: int):
         db.commit()
         task_store.finish_task(task_id, {"video_id": video_id,
                                          "words": len(result["words"]),
-                                         "language": result["language"]})
+                                         "language": result["language"],
+                                         "provider": provider})
+    except (AssemblyAIError, RuntimeError) as exc:
+        db.rollback()
+        video = db.query(Video).filter(Video.id == video_id).first()
+        if video:
+            video.transcript_status = "failed"
+            db.commit()
+        task_store.fail_task(task_id, str(exc))
     except Exception as exc:
         db.rollback()
         video = db.query(Video).filter(Video.id == video_id).first()
@@ -413,15 +434,28 @@ def transcribe(video_id: int, background: BackgroundTasks,
         raise HTTPException(status_code=404, detail="Video not found")
     if not video.stored_path or not os.path.exists(video.stored_path):
         raise HTTPException(status_code=400, detail="SAMPLE entries have no file to transcribe.")
-    try:
-        import faster_whisper  # noqa: F401
-    except ImportError:
-        raise HTTPException(status_code=503, detail=(
-            "Local transcription engine (faster-whisper) is not installed. "
-            "Run: pip install -r requirements.txt — or upload an SRT/TXT transcript instead."))
+    provider = transcription_provider()
+    if provider == "assemblyai":
+        if not assemblyai_configured():
+            raise HTTPException(status_code=503, detail=(
+                "AssemblyAI transcription is not configured. Get a free API key at "
+                "https://www.assemblyai.com/ and set ASSEMBLYAI_API_KEY in .env "
+                "(with TRANSCRIPTION_PROVIDER=assemblyai), then restart — or set "
+                "TRANSCRIPTION_PROVIDER=local to use faster-whisper instead."))
+    elif provider != "local":
+        raise HTTPException(
+            status_code=400,
+            detail="TRANSCRIPTION_PROVIDER must be 'local' or 'assemblyai'.")
+    else:
+        try:
+            import faster_whisper  # noqa: F401
+        except ImportError:
+            raise HTTPException(status_code=503, detail=(
+                "Local transcription engine (faster-whisper) is not installed. "
+                "Run: pip install -r requirements.txt — or upload an SRT/TXT transcript instead."))
     task_id = task_store.create_task("transcribe")
     background.add_task(_do_transcribe, task_id, video_id)
-    return {"task_id": task_id, "status": "running"}
+    return {"task_id": task_id, "status": "running", "provider": provider}
 
 
 @router.get("/{video_id}/transcript")
@@ -441,3 +475,38 @@ def get_task(task_id: str, user: User = Depends(get_current_principal)):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
+
+
+# ---- Twitch channel VOD import (Helix API + yt-dlp) ----
+
+@router.get("/twitch/vods")
+def twitch_vods(channel: str = "", first: int = 10,
+                user: User = Depends(get_current_principal)):
+    """Recent VODs (past broadcasts) for a Twitch channel. Live streams are
+    not returned — a live stream has no finished file to download."""
+    try:
+        vods = list_vods(channel, first)
+    except TwitchError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"channel": channel.strip().lower(), "vods": vods,
+            "note": "Live streams are not imported — only finished VODs."}
+
+
+@router.post("/twitch/import")
+def twitch_import(payload: TwitchImportIn, background: BackgroundTasks,
+                  user: User = Depends(get_current_principal),
+                  db: Session = Depends(get_db)):
+    """Import a Twitch VOD URL as a URL-ingest job (yt-dlp downloads it,
+    exactly like any other public URL)."""
+    _check_video_limit(db, user)
+    url = (payload.vod_url or "").strip()
+    if not url.startswith("https://www.twitch.tv/videos/"):
+        raise HTTPException(
+            status_code=400,
+            detail="vod_url must be a Twitch VOD URL (https://www.twitch.tv/videos/...). "
+                   "List VODs for a channel first with GET /api/videos/twitch/vods.")
+    task_id = task_store.create_task("url-download")
+    background.add_task(_do_download, task_id, url, payload.title or "",
+                        user.id, False, "chrome", None)
+    return {"task_id": task_id, "status": "running",
+            "note": "Twitch VOD is downloaded with yt-dlp, like any public URL."}

@@ -24,15 +24,16 @@ PLATFORMS = {
     "tiktok": {
         "label": "TikTok",
         "steps": [
-            "Register your app at developers.tiktok.com and request the video.upload scope.",
-            "Set TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET in .env, restart, then connect here.",
+            "Register your app at developers.tiktok.com and request the video.upload scope (developer approval required).",
+            "Set TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET and TIKTOK_REDIRECT_URI in .env, restart, then connect here.",
         ],
     },
     "instagram": {
         "label": "Instagram",
         "steps": [
             "Create a Meta developer app, add the Instagram Graph API product and connect a Business/Creator account.",
-            "Set INSTAGRAM_APP_ID, INSTAGRAM_APP_SECRET and a long-lived access token in .env, restart, then connect here.",
+            "Create a long-lived user access token and set INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID in .env.",
+            "Instagram downloads the video from a PUBLIC https URL — set INSTAGRAM_VIDEO_BASE_URL to a public host that serves your clip files (localhost will not work).",
         ],
     },
 }
@@ -146,5 +147,11 @@ def provider_keys(user: User = Depends(get_current_principal)):
              "env": "LLM_API_KEY", "note": "Optional. Local transparent scorer is used instead."},
             {"name": "Pexels (stock B-roll)", "status": status("PEXELS_API_KEY"),
              "env": "PEXELS_API_KEY", "note": "Optional. Upload your own B-roll files instead."},
+            {"name": "Twitch (channel VOD import)", "status": status("TWITCH_CLIENT_ID"),
+             "env": "TWITCH_CLIENT_ID", "note": "Optional. Paste a Twitch VOD URL into the Fetch URL form instead."},
+            {"name": "TikTok (direct publishing)", "status": status("TIKTOK_CLIENT_KEY"),
+             "env": "TIKTOK_CLIENT_KEY", "note": "Optional. Needs a TikTok developer app + approval."},
+            {"name": "Instagram (Reels publishing)", "status": status("INSTAGRAM_ACCESS_TOKEN"),
+             "env": "INSTAGRAM_ACCESS_TOKEN", "note": "Optional. Needs a Meta app + a public video URL."},
         ]
     }

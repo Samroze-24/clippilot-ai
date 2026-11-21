@@ -46,6 +46,13 @@
       </form>
       <div id="taskBox"></div>
       <div id="selectorBox" class="muted"></div>
+      <h3>Or import a Twitch channel's VODs</h3>
+      <p class="muted">Needs TWITCH_CLIENT_ID + TWITCH_CLIENT_SECRET in .env (see README). Live streams are not imported — only finished VODs.</p>
+      <form id="twitchForm">
+        <input type="text" id="twitchChannel" placeholder="Twitch channel name (e.g. shroud)" required>
+        <button type="submit">List VODs</button>
+      </form>
+      <div id="twitchList"></div>
     </div>
     <div class="card">
       <h2>Your videos</h2>
@@ -115,12 +122,17 @@
       </div>
       <h3>B-roll</h3>
       <p class="muted">Upload B-roll files to overlay for the first 5 seconds of a generated clip (bottom-right corner).
-      Pexels stock footage needs a Pexels API key — see Publishing &amp; Billing.</p>
+      Or search Pexels stock footage (needs PEXELS_API_KEY in .env — see README).</p>
       <form id="brollForm">
         <input type="file" id="brollFile" accept="video/mp4,video/webm,video/quicktime" required>
         <button type="submit">Upload B-roll</button>
       </form>
       <div id="brollList"></div>
+      <form id="pexelsForm">
+        <input type="text" id="pexelsQuery" placeholder="Search Pexels (e.g. city night)" required>
+        <button type="submit">Search Pexels</button>
+      </form>
+      <div id="pexelsList"></div>
       <div id="editorMsg"></div>
     </div>
   </section>

@@ -14,7 +14,9 @@ from ..auth import get_current_principal
 from ..captions import build_ass, find_caption_font
 from ..database import SessionLocal, get_db
 from ..models import Clip, ClipStat, Transcript, User, Video
-from ..schemas import ClipOut, ExportIn, GenerateIn, MergeIn, SplitIn, StatIn, TrimIn
+from ..pexels import PexelsError, download_pexels_file, pexels_configured, search_pexels
+from ..schemas import (ClipOut, ExportIn, GenerateIn, MergeIn,
+                       PexelsDownloadIn, SplitIn, StatIn, TrimIn)
 from ..video import PLAN_LIMITS, merge_clips, probe_video, render_clip
 
 router = APIRouter(prefix="/api/clips", tags=["clips"])
@@ -431,3 +433,48 @@ def list_broll(user: User = Depends(get_current_principal)):
     if not os.path.exists(BROLL_DIR):
         return {"files": []}
     return {"files": sorted(os.listdir(BROLL_DIR))}
+
+
+# ---- Pexels stock B-roll (real API; fail-closed without a key) ----
+
+@router.get("/pexels/search")
+def pexels_search(q: str = "", per_page: int = 6,
+                  user: User = Depends(get_current_principal)):
+    """Search Pexels stock videos (portrait, for 9:16 B-roll). Results are
+    real API results — never faked. 503 when PEXELS_API_KEY is not set."""
+    try:
+        results = search_pexels(q, per_page)
+    except PexelsError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"query": q, "results": results,
+            "note": "Pick a file link and download it as B-roll with POST /api/clips/pexels/download."}
+
+
+@router.post("/pexels/download", status_code=201)
+def pexels_download(payload: PexelsDownloadIn,
+                    user: User = Depends(get_current_principal)):
+    """Download one Pexels video file (from a search result) into the local
+    B-roll folder, so the renderer can overlay it on a clip. The file link
+    must be a Pexels CDN link — any other host is refused."""
+    if not pexels_configured():
+        raise HTTPException(status_code=503, detail=(
+            "Pexels B-roll is not configured. Get a free API key at "
+            "https://www.pexels.com/api/ and set PEXELS_API_KEY in .env, "
+            "then restart."))
+    from urllib.parse import urlparse
+    link = (payload.file_link or "").strip()
+    if not link.startswith("https://") or "videos.pexels.com" not in link.split("/")[2]:
+        raise HTTPException(status_code=400, detail=(
+            "file_link must be a Pexels video file link (videos.pexels.com) "
+            "from a search result."))
+    ext = os.path.splitext(urlparse(link).path)[1].lower() or ".mp4"
+    if ext not in {".mp4", ".webm", ".mov"}:
+        raise HTTPException(status_code=400, detail="Pexels file link must point to an MP4/WebM/MOV file.")
+    os.makedirs(BROLL_DIR, exist_ok=True)
+    dest = os.path.join(BROLL_DIR, f"pexels_{payload.video_id}_{uuid.uuid4().hex[:8]}{ext}")
+    try:
+        download_pexels_file(link, dest)
+    except PexelsError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"filename": os.path.basename(dest), "video_id": payload.video_id,
+            "note": "Saved to the B-roll folder — select it when generating a clip."}

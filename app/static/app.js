@@ -173,8 +173,12 @@ async function loadClips() {
           <button class="small" onclick="previewClip(${c.id})">Preview</button>
           <button class="small" onclick="downloadClip(${c.id})">Download</button>
           ${c.status === "ready"
-            ? `<button class="small" onclick="publishClip(${c.id})">Publish to YouTube</button>`
-            : `<button class="small" disabled title="Generate the clip first">Publish to YouTube</button>`}
+            ? `<button class="small" onclick="publishClip(${c.id})">Publish to YouTube</button>
+               <button class="small" onclick="publishClipTo('tiktok', ${c.id})">Publish to TikTok</button>
+               <button class="small" onclick="publishClipTo('instagram', ${c.id})">Publish to Instagram</button>`
+            : `<button class="small" disabled title="Generate the clip first">Publish to YouTube</button>
+               <button class="small" disabled title="Generate the clip first">Publish to TikTok</button>
+               <button class="small" disabled title="Generate the clip first">Publish to Instagram</button>`}
           <button class="small" onclick="logStats(${c.id})">Log stats</button>
           <button class="small danger" onclick="deleteClip(${c.id})">Delete</button>
         </div>
@@ -216,6 +220,35 @@ async function publishClip(id) {
       body: JSON.stringify({ clip_id: id, title: "", description: "", privacy }),
     });
     pollTask(r.task_id, "Publishing clip " + id + " to YouTube");
+  } catch (err) { alert(err.message); }
+}
+async function publishClipTo(platform, id) {
+  if (platform === "tiktok" && !window.tiktokConnected) {
+    alert("TikTok is not connected yet. Go to the Publishing & Billing tab and click Connect TikTok.");
+    return;
+  }
+  if (platform === "instagram" && !window.instagramReady) {
+    alert("Instagram is not ready yet. It needs INSTAGRAM_ACCESS_TOKEN, INSTAGRAM_USER_ID and a public INSTAGRAM_VIDEO_BASE_URL in .env — see the Publishing & Billing tab.");
+    return;
+  }
+  try {
+    let body = { clip_id: id };
+    if (platform === "tiktok") {
+      const privacy = (prompt("Privacy for this TikTok post (SELF_ONLY / PUBLIC_TO_EVERYONE / MUTUAL_FOLLOW_FRIENDS / FOLLOWER_OF_CREATOR):", "SELF_ONLY") || "SELF_ONLY").trim().toUpperCase();
+      if (!["SELF_ONLY", "PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR"].includes(privacy)) {
+        alert("Privacy must be SELF_ONLY, PUBLIC_TO_EVERYONE, MUTUAL_FOLLOW_FRIENDS or FOLLOWER_OF_CREATOR.");
+        return;
+      }
+      body.privacy = privacy;
+    }
+    if (platform === "instagram") {
+      body.caption = prompt("Caption for this Instagram Reel:", "") || "";
+    }
+    const r = await api("/api/publish/" + platform + "/upload", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    pollTask(r.task_id, "Publishing clip " + id + " to " + platform);
   } catch (err) { alert(err.message); }
 }
 async function deleteClip(id) {
@@ -308,6 +341,54 @@ async function loadBroll() {
       : "<p class='muted'>No B-roll files yet.</p>";
   } catch (err) { $("brollList").innerHTML = ""; }
 }
+$("pexelsForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const box = $("pexelsList");
+  box.innerHTML = "<p class='muted'>Searching Pexels…</p>";
+  try {
+    const r = await api("/api/clips/pexels/search?q=" + encodeURIComponent($("pexelsQuery").value));
+    if (!r.results.length) { box.innerHTML = "<p class='muted'>No Pexels results for that query.</p>"; return; }
+    box.innerHTML = r.results.map((v) => {
+      const file = (v.files || [])[0];
+      return `<div class="row"><b>${esc(v.id)} — ${esc(v.duration)}s</b>
+        <div class="muted"><a href="${esc(v.url)}" target="_blank">Pexels page</a> · ${v.files.length} file(s)</div>
+        ${file ? `<div style="margin-top:8px"><button class="small" onclick="downloadPexels(${v.id}, '${esc(file.link)}')">Download as B-roll</button></div>` : ""}
+      </div>`;
+    }).join("");
+  } catch (err) { box.innerHTML = "<p class='msg error'>" + esc(err.message) + "</p>"; }
+});
+async function downloadPexels(videoId, link) {
+  try {
+    const r = await api("/api/clips/pexels/download", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ video_id: videoId, file_link: link }),
+    });
+    alert("B-roll downloaded: " + r.filename);
+    loadBroll();
+  } catch (err) { alert(err.message); }
+}
+$("twitchForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const box = $("twitchList");
+  box.innerHTML = "<p class='muted'>Loading VODs…</p>";
+  try {
+    const r = await api("/api/videos/twitch/vods?channel=" + encodeURIComponent($("twitchChannel").value));
+    if (!r.vods.length) { box.innerHTML = "<p class='muted'>No VODs found for that channel.</p>"; return; }
+    box.innerHTML = r.vods.map((v) => `<div class="row"><b>${esc(v.title)}</b>
+      <div class="muted">${esc(v.duration)} · ${esc(v.created_at || "")} · ${v.view_count} views</div>
+      <div style="margin-top:8px"><button class="small" onclick="importTwitchVod('${esc(v.url)}', '${esc(v.title)}')">Import this VOD</button></div>
+    </div>`).join("") + "<p class='muted'>Live streams are not imported — only finished VODs.</p>";
+  } catch (err) { box.innerHTML = "<p class='msg error'>" + esc(err.message) + "</p>"; }
+});
+async function importTwitchVod(url, title) {
+  try {
+    const r = await api("/api/videos/twitch/import", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vod_url: url, title: title }),
+    });
+    pollTask(r.task_id, "Importing Twitch VOD");
+  } catch (err) { alert(err.message); }
+}
 
 $("uploadForm").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -350,7 +431,11 @@ async function loadPublishStatus() {
   try {
     const s = await api("/api/publish/status");
     const yt = s.youtube || {};
+    const tt = s.tiktok || {};
+    const ig = s.instagram || {};
     window.ytConnected = !!yt.connected;
+    window.tiktokConnected = !!tt.connected;
+    window.instagramReady = !!ig.public_url_ready;
     let html = `<div class="row"><b>YouTube</b> — <span class="badge">${esc(yt.status || "not_connected")}</span>`;
     if (yt.connected) {
       html += `<div class="muted">Connected${yt.channel ? " as " + esc(yt.channel) : ""} — uploads default to private.</div>
@@ -362,10 +447,26 @@ async function loadPublishStatus() {
       html += `<div class="muted">Not configured — set YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in .env (see README), then restart.</div>`;
     }
     html += `</div>
-      <div class="row"><b>TikTok</b> — <span class="badge">not_configured</span>
-      <div class="muted">Needs a TikTok developer app + approval (see README). No posting.</div></div>
-      <div class="row"><b>Instagram</b> — <span class="badge">not_configured</span>
-      <div class="muted">Needs a Meta developer app + Business/Creator account (see README). No posting.</div></div>`;
+      <div class="row"><b>TikTok</b> — <span class="badge">${esc(tt.status || "not_configured")}</span>`;
+    if (tt.connected) {
+      html += `<div class="muted">Connected${tt.channel ? " as " + esc(tt.channel) : ""} — uploads default to SELF_ONLY.</div>
+        <div style="margin-top:8px"><button class="small danger" onclick="disconnectTikTok()">Disconnect TikTok</button></div>`;
+    } else if (tt.configured) {
+      html += `<div class="muted">Developer app credentials are set — click Connect and sign in with TikTok.</div>
+        <div style="margin-top:8px"><button class="small" onclick="connectTikTok()">Connect TikTok</button></div>`;
+    } else {
+      html += `<div class="muted">Not configured — register an app at developers.tiktok.com (video.upload scope, approval required), set TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET in .env, then restart.</div>`;
+    }
+    html += `</div>
+      <div class="row"><b>Instagram</b> — <span class="badge">${esc(ig.status || "not_configured")}</span>`;
+    if (ig.public_url_ready) {
+      html += `<div class="muted">Configured — token + user ID set and a public video URL is ready. Reels publish from your public host.</div>`;
+    } else if (ig.configured) {
+      html += `<div class="muted">Token is set, but Instagram needs a PUBLIC video URL — set INSTAGRAM_VIDEO_BASE_URL in .env (localhost will not work).</div>`;
+    } else {
+      html += `<div class="muted">Not configured — create a Meta developer app + Business/Creator account, set INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID in .env, then restart.</div>`;
+    }
+    html += `</div>`;
     box.innerHTML = html;
   } catch (err) { box.innerHTML = "<p class='msg error'>" + esc(err.message) + "</p>"; }
 }
@@ -374,6 +475,22 @@ async function connectYouTube() {
     const r = await api("/api/publish/youtube/auth-url");
     window.open(r.auth_url, "_blank");
     alert("Google sign-in opened in a new tab. After allowing access you will be redirected back here — then refresh this page.");
+  } catch (err) { alert(err.message); }
+}
+async function connectTikTok() {
+  try {
+    const r = await api("/api/publish/tiktok/auth-url");
+    window.open(r.auth_url, "_blank");
+    alert("TikTok sign-in opened in a new tab. After allowing access you will be redirected back here — then refresh this page.");
+  } catch (err) { alert(err.message); }
+}
+async function disconnectTikTok() {
+  if (!confirm("Disconnect TikTok? Stored tokens will be deleted.")) return;
+  try {
+    await api("/api/publish/tiktok/disconnect", { method: "POST" });
+    window.tiktokConnected = false;
+    loadPublishStatus();
+    loadAccounts();
   } catch (err) { alert(err.message); }
 }
 async function disconnectYouTube() {

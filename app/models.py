@@ -49,7 +49,7 @@ class Transcript(Base):
     __tablename__ = "transcripts"
     id = Column(Integer, primary_key=True, index=True)
     video_id = Column(Integer, ForeignKey("videos.id"), nullable=False)
-    # source: upload | whisper
+    # source: upload | whisper | assemblyai
     source = Column(String(20), default="upload")
     language = Column(String(10), default="en")
     # JSON: [{"text": str, "start": float, "end": float}]

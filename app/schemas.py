@@ -111,6 +111,28 @@ class YoutubeUploadIn(BaseModel):
     privacy: str = "private"  # private | unlisted | public (default private)
 
 
+class TikTokUploadIn(BaseModel):
+    clip_id: int
+    title: str = ""
+    description: str = ""
+    privacy: str = "SELF_ONLY"  # SELF_ONLY | PUBLIC_TO_EVERYONE | MUTUAL_FOLLOW_FRIENDS | FOLLOWER_OF_CREATOR (default SELF_ONLY)
+
+
+class InstagramUploadIn(BaseModel):
+    clip_id: int
+    caption: str = ""
+
+
+class TwitchImportIn(BaseModel):
+    vod_url: str
+    title: str = ""
+
+
+class PexelsDownloadIn(BaseModel):
+    video_id: int
+    file_link: str
+
+
 class ApiKeyOut(BaseModel):
     id: int
     name: str

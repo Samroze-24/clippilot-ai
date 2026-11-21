@@ -2,9 +2,11 @@
 
 Upload a long video (or a public URL), analyse it locally, get ranked
 9:16 clips with transparent scores, and render them with real ffmpeg.
-Local by default; two optional cloud features (Groq LLM clip selection and
-direct YouTube publishing) run only when you configure their credentials.
-No paid service is ever required.
+Local by default; optional cloud features (Groq LLM clip selection, direct
+YouTube/TikTok/Instagram publishing, AssemblyAI transcription, Pexels
+B-roll, Twitch VOD import) run only when you configure their credentials.
+No paid service is ever required. An MCP server (python -m app.mcp) exposes
+the same features to MCP clients.
 """
 import os
 
@@ -16,13 +18,15 @@ from .database import Base, engine
 from .routers import accounts, auth, clips, publish, videos
 from .video import ffmpeg_version
 
-app = FastAPI(title="ClipPilot AI", version="1.2.0",
+app = FastAPI(title="ClipPilot AI", version="1.3.0",
               description="Local-first video clipping: long video in, short vertical "
                           "clips out. Uploads, URL ingestion (yt-dlp), transparent "
                           "local highlight scoring with optional Groq LLM clip "
                           "selection, face-centred 9:16 rendering, "
                           "word-synced captions, editor (trim/split/merge), platform "
-                          "export presets, direct YouTube publishing (OAuth), mock "
+                          "export presets, direct YouTube/TikTok/Instagram publishing "
+                          "(OAuth / Graph API), Pexels stock B-roll, Twitch VOD import, "
+                          "AssemblyAI transcription option, MCP server, mock "
                           "billing and local API keys. Cloud features only run when "
                           "you configure them — otherwise everything stays local.")
 
